@@ -1,22 +1,33 @@
 ---
 title: "EDA SIP"
+author: "Whendell Feijó Magalhães"
+date: "21 de Abril de 2019"
 output:
-    html_document:
-    df_print: paged
+  html_document:
+    code_folding: hide
+  pdf_document: default
+  df_print: paged
 theme: sandstone
 ---
 
-```{r echo=FALSE, message=FALSE, warning=FALSE}
+<style>
+body{
+text-align: justify}
+</style>
+
+
+```{r, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(here)
+library(formattable)
 source(here::here("code/lib.R"))
 theme_set(theme_bw())
 
 knitr::opts_chunk$set(tidy = FALSE,
-                      fig.width = 6,
-                      fig.height = 5,
-                      echo = FALSE)
-
+                      fig.width = 7,
+                      fig.height = 6,
+                      echo = TRUE,
+                      fig.align="center")
 ```
 
 ```{r read}
@@ -39,14 +50,6 @@ estimativas_raw %>%
 
 Temos 20 projetos, com 12299 estimativas_raw. Não há apenas uma estimativa por tarefa, já que há apenas 10266 valores distintos de `TaskNumber`.
 
-```{r}
-estimativas_raw %>% 
-    group_by(TaskNumber) %>% 
-    mutate(estimativas = n()) %>% 
-    filter(estimativas > 1) %>% 
-    count(TaskNumber, sort = T)
-```
-
 ### 1 estimativa por task
 
 Para nossa análise, usaremos uma estimativa por task. Caso haja mais de uma usaremos a média das estimativas_raw:
@@ -65,16 +68,156 @@ estimativas = estimativas_raw %>%
 ### Dados por time
 
 ```{r}
-por_time = estimativas_raw %>% 
+por_time <- estimativas_raw %>% 
     group_by(ProjectCode) %>% 
     summarise(devs = NROW(unique(DeveloperID)), 
               erro_medio_abs = mean(abs(HoursEstimate - HoursActual)), 
               estimativas = n())
+
+formattable(por_time)
 ```
 
+### Qual a relação entre as estimativas e horas reais tomadas na empresa como um todo?
+#
+#### Antes de realizar qualquer operação/modificação nos dados preprocessados, plotei um gráfico de pontos com as variáveis de interesse com a finalidade de analisar a dispersão dos dados e tentar encontrar valores extremos ou errados. Como pode ser visto no gráfico abaixo a maior concentração dos dados está no intervalo de [0,250] para a variável HoursEstimate e [0,500] para a variável HoursActual. Além disso também é possível identificar valores extremos que ocorrem quando há uma discrepância muito grande entre as horas estimadas e as reais. 
 
-## Qual a relação entre as estimativas e horas reais tomadas na empresa como um todo e em diferentes categorias de tarefa?
+```{r real x estimado total} 
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkorange", size = 2, alpha = 0.7)
+```
 
+### A tabela abaixo nos mostra quem são esses pontos extremos:
 
-## Equipes com mais desenvolvedores produzem estimativas com mais ou menos erro que equipes menores? 
+```{r real x estimado total: quem são os extremos?} 
+estimativas %>%
+    filter(HoursActual > 1000 | HoursEstimate >= 500) %>% 
+    select(TaskNumber, HoursEstimate, HoursActual) %>%
+    mutate("Actual - Estimate" = HoursActual - HoursEstimate) %>% 
+    formattable()
+```
 
+#### A coluna 'Actual - Estimate' foi adicionada para facilitar a identificação da diferença entre a estimativa e o tempo real. *Valores positivos* indicam que o *tempo real* foi superior ao estimado em _n_ horas e *valores negativos* indicam que o *tempo estimado* foi superior ao real em _n_ horas.
+#
+#### Outro ponto importante a se observar no gráfico anterior é que a visualização da dispersão dos dados não nos dá indícios claros sobre uma possível correlação entre as variáveis, indicando somente os pontos extremos. Para os gráficos abaixo os pontos extremos são retirados.
+
+```{r escala logaritmica}
+estimativas <- filter(estimativas, HoursActual < 1000)
+
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkorange", size = 2, alpha = 0.7) +
+    scale_x_continuous(trans='log2', minor_breaks = F) + 
+    ggtitle("\t\t\t\t1. Escala logarítmica no eixo x")
+
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkorange", size = 2, alpha = 0.7) +
+    scale_y_continuous(trans='log2', minor_breaks = F) + 
+    ggtitle("\t\t\t\t2. Escala logarítmica no eixo y")
+
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkorange", size = 2, alpha = 0.7) +
+    scale_y_continuous(trans='log2', minor_breaks = F) +
+    scale_x_continuous(trans='log2', minor_breaks = F) +
+    ggtitle("\t\t\t3. Escala logarítmica nos 2 eixos")
+```
+
+#### Os gráficos acima mostram a dispersão quando aplicamos uma transformação logarítmica nos eixos. Ao aplicar a transformação no eixo x já é possível identificar que há uma correlação positiva entre as variáveis, isso fica ainda mais evidente quando aplicamos a mesma transformação em ambos os eixos, indicando que há uma relação polinomial positiva entre as variáveis HoursEstimate e HoursActual. A tabela abaixo representa os coeficientes de correlação:
+#
+
+```{r calculando as correlaçoes}
+estimativas %>%
+    summarise(pearson = cor(HoursEstimate, HoursActual, method = "pearson"), 
+            spearman = cor(HoursEstimate, HoursActual, method = "spearman"),
+            kendall = cor(HoursEstimate, HoursActual, method = "kendall")) %>% 
+    formattable()
+```
+
+### Qual a relação entre as estimativas e horas reais em diferentes categorias de tarefa?
+#
+#### O gráfico abaixo mostra a dispersão da variável HoursActual em função da variável HoursEstimate por categoria de tarefa. Visto que esses dados são um subconjunto dos anteriormente explorados os pontos extremos são os mesmos.
+
+```{r dispersão categorias}
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkblue", size = 2, alpha=0.6) +
+    facet_wrap(~Category)
+```
+
+#### Nos gráficos, que apresenta relação dos dados ao aplicar transformações logarítmicas em cada um dos eixos e em ambos simulataneamente, podemos observar uma tendência parecida com a apresentada pelos dados da empresa como um todo, tanto em forma quanto em sinal e força.
+
+```{r escala logarítmica categorias}
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkblue", size = 2, alpha = 0.7) +
+    scale_x_continuous(trans='log2', minor_breaks = F) + 
+    ggtitle("\t\t\t\t1. Escala logarítmica no eixo x") +
+    facet_wrap(~Category)
+
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkblue", size = 2, alpha = 0.7) +
+    scale_y_continuous(trans='log2', minor_breaks = F) + 
+    ggtitle("\t\t\t\t2. Escala logarítmica no eixo y") +
+    facet_wrap(~Category)
+
+estimativas %>%
+    ggplot(aes(x = HoursEstimate, y = HoursActual)) +
+    geom_point(color = "darkblue", size = 2, alpha = 0.7) +
+    scale_y_continuous(trans='log2', minor_breaks = F) +
+    scale_x_continuous(trans='log2', minor_breaks = F) +
+    ggtitle("\t\t\t3. Escala logarítmica nos 2 eixos") +
+    facet_wrap(~Category)
+```
+
+#### A tabela abaixo apresenta os coeficientes de correlação por categoria:
+
+```{r correlações por categoria}
+estimativas %>%
+    group_by(Category) %>%
+    summarise(pearson = cor(HoursEstimate, HoursActual, method = "pearson"), 
+            spearman = cor(HoursEstimate, HoursActual, method = "spearman"),
+            kendall = cor(HoursEstimate, HoursActual, method = "kendall")) %>% 
+    formattable()
+```
+
+### Equipes com mais desenvolvedores produzem estimativas com mais ou menos erro que equipes menores? 
+```{r n de devs x erros}
+
+por_time %>%
+    ggplot(aes(x = devs, y = erro_medio_abs)) +
+    geom_point(color = "red", size = 2, alpha = 0.7) +
+    ggtitle("\t\t\t\t\t\t1. Escala linear")
+    
+
+por_time %>%
+    ggplot(aes(x = devs, y = erro_medio_abs)) +
+    geom_point(color = "red", size = 2, alpha = 0.7) + 
+    scale_x_continuous(trans='log2', minor_breaks = F) +
+    ggtitle("\t\t\t\t2. Escala logarítmica no eixo x")
+
+por_time %>%
+    ggplot(aes(x = devs, y = erro_medio_abs)) +
+    geom_point(color = "red", size = 2, alpha = 0.7) +
+    scale_y_continuous(trans='log2', minor_breaks = F) +
+    ggtitle("\t\t\t\t3. Escala logarítmica no eixo y")
+
+por_time %>%
+    ggplot(aes(x = devs, y = erro_medio_abs)) +
+    geom_point(color = "red", size = 2, alpha = 0.7) +
+    scale_x_continuous(trans='log2', minor_breaks = F) +
+    scale_y_continuous(trans='log2', minor_breaks = F) +
+    ggtitle("\t\t\t\t4. Escala logarítmica em ambos os eixos")
+```
+
+#### Os gráficos acima mostram a distribuição do erro médio absoluto por tarefa em função do número de desenvolvedores por equipe. A partir da vizualização é difícil identificar uma correlação entre o número de desenvolvedores e o erro médio na estimativa, ainda que apliquemos transformações logarítmicas nos eixos, o que me leva a conclusão de que as variáveis não apresentam relação entre si. Os coeficientes apresentados na tabela abaixo são mais uma evidência de que estas variáveis não são correlacionadas. 
+
+```{r calculando as correlaçoes devs x erro_medio_abs}
+por_time %>%
+    summarise(pearson = cor(devs, erro_medio_abs, method = "pearson"), 
+              spearman = cor(devs, erro_medio_abs, method = "spearman"),
+              kendall = cor(devs, erro_medio_abs, method = "kendall")) %>% 
+    formattable()
+```
